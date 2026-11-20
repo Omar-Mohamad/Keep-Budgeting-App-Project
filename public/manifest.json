@@ -1,0 +1,18 @@
+{
+  "name": "Keep — Privacy-First Budgeting",
+  "short_name": "Keep",
+  "description": "Privacy-first personal budgeting web application on Microsoft OneDrive",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FAFAFA",
+  "theme_color": "#202124",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

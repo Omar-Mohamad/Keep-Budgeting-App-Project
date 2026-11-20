@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect } from 'react'
-import { PublicClientApplication } from '@azure/msal-browser'
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { PublicClientApplication, InteractionRequiredAuthError } from '@azure/msal-browser'
 import { msalConfig, loginRequest } from './msalConfig'
+import { wipeLocalDatabase } from '../data/db'
 
 const AuthContext = createContext(null)
 
@@ -10,9 +11,13 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  const [authStage, setAuthStage] = useState('initializing') // 'initializing' | 'restoring' | 'idle' | 'authenticating' | 'error'
   const [error, setError] = useState(null)
 
+  // Initialize MSAL once
   useEffect(() => {
+    let isMounted = true
+
     async function initMsal() {
       try {
         if (!msalInstance) {
@@ -20,71 +25,126 @@ export function AuthProvider({ children }) {
           await msalInstance.initialize()
         }
 
-        const accounts = msalInstance.getAllAccounts()
-        if (accounts.length > 0) {
-          const activeAccount = accounts[0]
-          msalInstance.setActiveAccount(activeAccount)
-          setUser({
-            displayName: activeAccount.name || activeAccount.username,
-            email: activeAccount.username,
-            id: activeAccount.localAccountId,
-          })
-          setIsAuthenticated(true)
+        // Handle redirect promise if user was redirected from Entra
+        const redirectResponse = await msalInstance.handleRedirectPromise().catch(() => null)
+        
+        let account = null
+        if (redirectResponse?.account) {
+          account = redirectResponse.account
+        } else {
+          const currentAccounts = msalInstance.getAllAccounts()
+          if (currentAccounts.length > 0) {
+            account = currentAccounts[0]
+          }
+        }
+
+        if (account) {
+          msalInstance.setActiveAccount(account)
+          if (isMounted) {
+            setUser({
+              displayName: account.name || account.username,
+              email: account.username,
+              id: account.localAccountId,
+            })
+            setIsAuthenticated(true)
+          }
+        } else {
+          // Attempt silent session restoration if supported
+          try {
+            setAuthStage('restoring')
+            const silentResponse = await msalInstance.ssoSilent(loginRequest)
+            if (silentResponse?.account && isMounted) {
+              msalInstance.setActiveAccount(silentResponse.account)
+              setUser({
+                displayName: silentResponse.account.name || silentResponse.account.username,
+                email: silentResponse.account.username,
+                id: silentResponse.account.localAccountId,
+              })
+              setIsAuthenticated(true)
+            }
+          } catch {
+            // Normal fallback: user must sign in interactively
+          }
         }
       } catch (err) {
-        console.error('Failed to initialize MSAL:', err)
-        setError(err.message)
+        console.warn('MSAL initialization warning:', err)
+        if (isMounted) {
+          setError(err.message || 'Failed to initialize authentication.')
+        }
       } finally {
-        setIsLoading(false)
+        if (isMounted) {
+          setIsLoading(false)
+          setAuthStage('idle')
+        }
       }
     }
 
     initMsal()
+
+    return () => {
+      isMounted = false
+    }
   }, [])
 
-  const signIn = async () => {
+  // Interactive Sign In with PKCE (Popup)
+  const signIn = useCallback(async () => {
+    if (!msalInstance) throw new Error('MSAL is not initialized.')
     try {
       setIsLoading(true)
+      setAuthStage('authenticating')
       setError(null)
-      const loginResponse = await msalInstance.loginPopup(loginRequest)
-      if (loginResponse.account) {
-        msalInstance.setActiveAccount(loginResponse.account)
+
+      const response = await msalInstance.loginPopup(loginRequest)
+      if (response?.account) {
+        msalInstance.setActiveAccount(response.account)
         setUser({
-          displayName: loginResponse.account.name || loginResponse.account.username,
-          email: loginResponse.account.username,
-          id: loginResponse.account.localAccountId,
+          displayName: response.account.name || response.account.username,
+          email: response.account.username,
+          id: response.account.localAccountId,
         })
         setIsAuthenticated(true)
+        return response.account
       }
     } catch (err) {
-      console.error('Sign-in error:', err)
-      setError(err.message)
+      console.error('Sign-in failed:', err)
+      setError(err.message || 'Authentication error')
       throw err
     } finally {
       setIsLoading(false)
+      setAuthStage('idle')
     }
-  }
+  }, [])
 
-  const signOut = async () => {
+  // Sign Out & Client-Side Cache Wipe
+  const signOut = useCallback(async () => {
+    if (!msalInstance) return
     try {
       setIsLoading(true)
-      if (msalInstance) {
-        await msalInstance.logoutPopup()
+      // Total purge of local IndexedDB cache upon logout as specified
+      await wipeLocalDatabase()
+
+      const currentAccount = msalInstance.getActiveAccount()
+      if (currentAccount) {
+        await msalInstance.logoutPopup({
+          account: currentAccount,
+          mainWindowRedirectUri: window.location.origin,
+        })
       }
+    } catch (err) {
+      console.warn('Sign-out warning:', err)
+    } finally {
       setUser(null)
       setIsAuthenticated(false)
-    } catch (err) {
-      console.error('Sign-out error:', err)
-      setError(err.message)
-    } finally {
       setIsLoading(false)
+      setAuthStage('idle')
     }
-  }
+  }, [])
 
-  const getAccessToken = async () => {
-    if (!msalInstance) throw new Error('MSAL not initialized')
+  // Acquire Graph API Access Token (Held strictly in memory)
+  const getAccessToken = useCallback(async () => {
+    if (!msalInstance) throw new Error('MSAL is not initialized.')
     const account = msalInstance.getActiveAccount()
-    if (!account) throw new Error('No active account')
+    if (!account) throw new Error('User is not authenticated. No active account in memory.')
 
     try {
       const response = await msalInstance.acquireTokenSilent({
@@ -93,11 +153,13 @@ export function AuthProvider({ children }) {
       })
       return response.accessToken
     } catch (err) {
-      // Fallback to interactive popup
-      const response = await msalInstance.acquireTokenPopup(loginRequest)
-      return response.accessToken
+      if (err instanceof InteractionRequiredAuthError) {
+        const response = await msalInstance.acquireTokenPopup(loginRequest)
+        return response.accessToken
+      }
+      throw err
     }
-  }
+  }, [])
 
   return (
     <AuthContext.Provider
@@ -105,6 +167,7 @@ export function AuthProvider({ children }) {
         user,
         isAuthenticated,
         isLoading,
+        authStage,
         error,
         signIn,
         signOut,

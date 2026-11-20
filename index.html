@@ -4,10 +4,23 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>keep-budgetting-app-project</title>
+    <meta name="theme-color" content="#202124" />
+    <meta name="description" content="Privacy-first personal budgeting web application on Microsoft OneDrive" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>Keep — Privacy-First Budgeting</title>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // Register PWA service worker
+      if ('serviceWorker' in navigator && import.meta.env?.PROD) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch((err) => {
+            console.warn('[PWA] ServiceWorker registration failed:', err);
+          });
+        });
+      }
+    </script>
   </body>
 </html>
