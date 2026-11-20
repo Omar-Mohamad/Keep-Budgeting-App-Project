@@ -1,6 +1,0 @@
-export { DashboardPage } from './DashboardPage'
-export { TransactionsPage } from './TransactionsPage'
-export { BudgetsPage } from './BudgetsPage'
-export { SavingsPage } from './SavingsPage'
-export { InsightsPage } from './InsightsPage'
-export { SettingsPage } from './SettingsPage'

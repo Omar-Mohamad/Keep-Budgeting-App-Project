@@ -44,9 +44,11 @@ To prevent merge conflicts and blockers, each module is decoupled behind clear i
 └────────────────────────────────────────────────────────┘
 ```
 
-### Working with Mock Data
-- **Mazen** can develop and test all screens immediately using `src/mock/` without waiting for Entra ID or Graph API configuration.
-- The `useDataLayer()` hook (`src/data/useDataLayer.js`) automatically provides mock state and real-time calculations out of the box.
+### Figma Design Specs Reference
+- All official screen mockups designed in Figma for both desktop and mobile viewports are organized in:
+  - `docs/designs/desktop/` (01-signin to 40-signout-confirmation)
+  - `docs/designs/mobile/` (01-signin to 41-menu-drawer)
+- **Mazen** references these screens when building the layout shell, the 6 core pages, overlays, and empty/loading/error states.
 
 ---
 
